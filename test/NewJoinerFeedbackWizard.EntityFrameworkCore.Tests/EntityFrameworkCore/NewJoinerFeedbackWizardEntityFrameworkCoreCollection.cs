@@ -1,0 +1,9 @@
+﻿using Xunit;
+
+namespace NewJoinerFeedbackWizard.EntityFrameworkCore;
+
+[CollectionDefinition(NewJoinerFeedbackWizardTestConsts.CollectionDefinitionName)]
+public class NewJoinerFeedbackWizardEntityFrameworkCoreCollection : ICollectionFixture<NewJoinerFeedbackWizardEntityFrameworkCoreFixture>
+{
+
+}

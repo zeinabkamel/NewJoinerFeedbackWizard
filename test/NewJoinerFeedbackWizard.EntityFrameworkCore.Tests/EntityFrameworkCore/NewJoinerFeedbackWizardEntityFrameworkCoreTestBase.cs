@@ -1,0 +1,8 @@
+﻿using Volo.Abp;
+
+namespace NewJoinerFeedbackWizard.EntityFrameworkCore;
+
+public abstract class NewJoinerFeedbackWizardEntityFrameworkCoreTestBase : NewJoinerFeedbackWizardTestBase<NewJoinerFeedbackWizardEntityFrameworkCoreTestModule>
+{
+
+}

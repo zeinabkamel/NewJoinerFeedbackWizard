@@ -1,66 +1,84 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# This workflow helps you trigger a SonarQube analysis of your code and populates
-# GitHub Code Scanning alerts with the vulnerabilities found.
-# (this feature is available starting from SonarQube 9.7, Developer Edition and above)
-
-# 1. Make sure you add a valid GitHub configuration to your SonarQube (Administration > DevOps platforms > GitHub)
-
-# 2. Import your project on SonarQube
-#     * Add your repository as a new project by clicking "Create project" from your homepage.
-#
-# 3. Select GitHub Actions as your CI and follow the tutorial
-#     * a. Generate a new token and add it to your GitHub repository's secrets using the name SONAR_TOKEN
-#          (On SonarQube, click on your avatar on top-right > My account > Security or ask your administrator)
-#
-#     * b. Copy/paste your SonarQube host URL to your GitHub repository's secrets using the name SONAR_HOST_URL
-#
-#     * c. Copy/paste the project Key into the args parameter below
-#          (You'll find this information in SonarQube by following the tutorial or by clicking on Project Information at the top-right of your project's homepage)
-
-# Feel free to take a look at our documentation (https://docs.sonarqube.org/latest/analysis/github-integration/)
-# or reach out to our community forum if you need some help (https://community.sonarsource.com/c/sq/10)
-
-name: SonarQube analysis
+name: SonarQube analysis and create GH issues
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "master" ]
-  workflow_dispatch:
+    types: [opened, synchronize, reopened]
 
 permissions:
-  pull-requests: read # allows SonarQube to decorate PRs with analysis results
+  contents: read
+  pull-requests: write
+  issues: write   # لو هننشئ GitHub issues
+  checks: write
 
 jobs:
-  Analysis:
-    runs-on: ubuntu-latest
-
+  prepare:
+    runs-on: windows-latest
     steps:
-      - name: Analyze with SonarQube
-
-        # You can pin the exact commit or the version.
-        # uses: SonarSource/sonarqube-scan-action@v1.1.0
-        uses: SonarSource/sonarqube-scan-action@7295e71c9583053f5bf40e9d4068a0c974603ec8
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}   # Generate a token on SonarQube, add it to the secrets of this repo with the name SONAR_TOKEN (Settings > Secrets > Actions > add new repository secret)
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}   # add the URL of your instance to the secrets of this repo with the name SONAR_HOST_URL (Settings > Secrets > Actions > add new repository secret)
+      - uses: actions/checkout@v4
         with:
-          # Additional arguments for the sonarcloud scanner
-          args:
-            # Unique key of your project. You can find it in SonarQube > [my project] > Project Information (top-right menu)
-            # mandatory
-            -Dsonar.projectKey=zeinabkamel_NewJoinerFeedbackWizard
-            # Comma-separated paths to directories containing main source files.
-            #-Dsonar.sources= # optional, default is project base directory
-            # When you need the analysis to take place in a directory other than the one from which it was launched
-            #-Dsonar.projectBaseDir= # optional, default is .
-            # Comma-separated paths to directories containing test source files.
-            #-Dsonar.tests= # optional. For more info about Code Coverage, please refer to https://docs.sonarcloud.io/enriching/test-coverage/overview/
-            # Adds more detail to both client and server-side analysis logs, activating DEBUG mode for the scanner, and adding client-side environment variables and system properties to the server-side log of analysis report processing.
-            #-Dsonar.verbose= # optional, default is false
+          fetch-depth: 0
+
+      - name: Configure NuGet (GitHub Packages)
+        shell: powershell
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # أو PAT لو محتاجة صلاحيات إضافية
+        run: |
+          dotnet nuget add source "https://nuget.pkg.github.com/zeinabkamel/index.json" `
+            -n "GitHubPackages" `
+            --username $env:GITHUB_ACTOR `
+            --password "$env:NUGET_AUTH_TOKEN" `
+            --store-password-in-clear-text
+          dotnet restore
+
+  sonar:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v1.1.0
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=zeinabkamel_EjadaRndCICDDemo
+            -Dsonar.sources=.
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }}
+
+  create-issues:
+    if: always()
+    needs: sonar
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get new Sonar issues and create GitHub issues (example)
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_KEY: zeinabkamel_EjadaRndCICDDemo
+        run: |
+          #!/usr/bin/env bash
+          # 1) Get new/unresolved issues from Sonar
+          issues_json=$(curl -s -G --user "${SONAR_TOKEN}:" "${SONAR_HOST_URL}/api/issues/search" --data-urlencode "componentKeys=${PROJECT_KEY}" --data "resolved=false" --data "ps=50")
+          count=$(echo "$issues_json" | jq '.total')
+          echo "Sonar reported $count open issues."
+          if [ "$count" -gt 0 ]; then
+            echo "$issues_json" | jq -c '.issues[]' | while read issue; do
+              key=$(echo "$issue" | jq -r '.key')
+              summary=$(echo "$issue" | jq -r '.message' | tr -d '\r\n' | cut -c1-240)
+              file=$(echo "$issue" | jq -r '.component' | awk -F: '{print $2}')
+              line=$(echo "$issue" | jq -r '.line')
+              body="SonarQube issue ($key)\n\n$message\n\nFile: $file:$line\n\nSonar URL: ${SONAR_HOST_URL}/project/issues?id=${PROJECT_KEY}&issues=${key}"
+              # create GitHub issue
+              gh_api='https://api.github.com/repos/${{ github.repository }}/issues'
+              payload=$(jq -n --arg t "$summary" --arg b "$body" '{title:$t, body:$b, labels:["sonarqube"]}')
+              curl -s -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" "${gh_api}" -d "$payload"
+            done
+          fi

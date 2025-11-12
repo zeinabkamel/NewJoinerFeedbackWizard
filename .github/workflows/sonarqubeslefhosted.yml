@@ -1,0 +1,44 @@
+name: SonarQube analysis (PR decoration)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  pull-requests: write    # يسمح للـ action بعمل decoration على PR
+  checks: write
+
+jobs:
+  sonar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Cache Sonar scanner
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/scanner
+          key: ${{ runner.os }}-sonar-scanner
+
+      - name: Analyze with SonarQube
+        uses: SonarSource/sonarqube-scan-action@7295e71c9583053f5bf40e9d4068a0c974603ec8
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # للـ PR info و decoration
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}     # توكن من SonarQube
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=zeinabkamel_NewJoinerFeedbackWizard
+            -Dsonar.projectBaseDir=./
+            -Dsonar.sources=.
